@@ -4,65 +4,19 @@ const app = express();
 const port = 8000;
 const fs = require('fs')
 const { Client } = require("espn-fantasy-football-api/node-dev");
-const myClient = new Client({ leagueId: 36007468 });
+const myClient = new Client({ leagueId: 36007468 });   
 myClient.setCookies({ espnS2: process.env.ESPN_S2, SWID: process.env.SWID });
-let data = "";
-
-class Team {
-    constructor(id, name) {
-        this.id = id;
-        this.name = name;
-        this.results = [];
-        this.wins = 0;
-        this.losses = 0;
-    }
-
-    getId() {
-        return this.id;
-    }
-
-    getName() {
-        return this.name;
-    }
-
-    getStandings() {
-        return this.results;
-    }
-
-    addWin() {
-        this.results.push(1);
-    }
-
-    addLoss() {
-        this.results.push(0);
-    }
-
-    calculateResults() {
-        let wins = 0;
-        let losses = 0;
-        this.results.forEach((result) => {
-            if (result == 1) wins++;
-            if (result == 0) losses++;
-        });
-
-        this.wins = wins;
-        this.losses = losses;
-    }
-
-    //return standing for that week in season, 1-indexed
-    getStandingForWeek(week) {
-        if (week > 0 && week <= this.standings.length) {
-            return this.standings.get(week-1);
-        }
-    }
-}
+const Team = require('./team.js');
+let data = "";  // data to be written to .csv
+const season = 2020;   
 
 app.get('/', async (req, res) => {
-    // let data = "ID, Team Name\n";
+    //get team names
     let teams = await initializeTeams();
     let gamesRes = "";
     let numWeeks = await getNumberOfWeeksInRegularSeason();
 
+    //run through season and log matchups, wins, losses
     teams = await analyzeSeason(teams, numWeeks);
 
     fs.writeFile('data.csv', data, (err) => {
@@ -74,7 +28,7 @@ app.get('/', async (req, res) => {
 
 async function initializeTeams() {
     teams = new Map();
-    await myClient.getTeamsAtWeek({seasonId: 2020, scoringPeriodId: 1}).then((res) => {
+    await myClient.getTeamsAtWeek({seasonId: season, scoringPeriodId: 1}).then((res) => {
       res.forEach(team => {
           teams.set(team.id, new Team(team.id, team.name));
       })
@@ -86,7 +40,7 @@ async function initializeTeams() {
 
 async function getNumberOfWeeksInRegularSeason() {
     let numWeeks = 0;
-    await myClient.getLeagueInfo({ seasonId: 2020 }).then((league) => {
+    await myClient.getLeagueInfo({ seasonId: season }).then((league) => {
         numWeeks = league.scheduleSettings.numberOfRegularSeasonMatchups;
     }).catch((err) => {
         console.error(err);
@@ -98,7 +52,7 @@ async function analyzeSeason(teams, numWeeks) {
     for (let week = 1; week <= numWeeks; week++) {
         console.log(week);
         data += `Week ${week}\nHome Team,Home Score,,Away Team, Away Score\n`
-        await myClient.getBoxscoreForWeek( { seasonId: 2020, scoringPeriodId: week, matchupPeriodId: week}).then((boxScores) => {
+        await myClient.getBoxscoreForWeek( { seasonId: season, scoringPeriodId: week, matchupPeriodId: week}).then((boxScores) => {
             boxScores.forEach((boxScore) => {
                 const homeTeam = teams.get(boxScore.homeTeamId);
                 const awayTeam = teams.get(boxScore.awayTeamId);
@@ -110,6 +64,7 @@ async function analyzeSeason(teams, numWeeks) {
                     homeTeam.addLoss();
                     awayTeam.addWin();
                 }
+
                 teams.set(boxScore.homeTeamId, homeTeam);
                 teams.set(boxScore.awayTeamId, awayTeam);
             })
@@ -119,14 +74,38 @@ async function analyzeSeason(teams, numWeeks) {
             data += "\n\n";
         });
 
-        for (let i = 1; i <= teams.size; i++) {
-            const team = teams.get(i);
-            team.calculateResults();
-            teams.set(i, team);
-        }
+        writeWeeklyStandingsToData(week, teams);
     }
-
     return teams;
+}
+
+function writeWeeklyStandingsToData(week, teams) {
+    data += `Week ${week} Standings\nTeam Name,Wins,Losses\n`;
+    let weeklyTeamStandings = sortTeamStandingsByWins(teams);
+    weeklyTeamStandings.forEach(team => {
+        data += `${team.name},${team.wins},${team.losses}\n`;
+    })
+    data += "\n\n";
+}
+
+function sortTeamStandingsByWins(teams) {
+    let teamsArray = [];
+    teams.forEach((team) => {
+        teamsArray.push(team);
+    });
+    teamsArray.sort(compareWins);
+    return teamsArray;
+}
+
+//comparator function for sortTeamStandingsByWins
+function compareWins(a, b) {
+  if (a.wins < b.wins) {
+    return 1;
+  }
+  if (a.wins > b.wins) {
+    return -1;
+  }
+  return 0;
 }
 
 app.listen(port, () => {
