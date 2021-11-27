@@ -4,29 +4,28 @@ const app = express();
 const port = 8000;
 const fs = require('fs')
 const { Client } = require("espn-fantasy-football-api/node-dev");
-const myClient = new Client({ leagueId: 36007468 });   
+const myClient = new Client({ leagueId: process.env.LEAGUE_ID });   
 myClient.setCookies({ espnS2: process.env.ESPN_S2, SWID: process.env.SWID });
 const Team = require('./team.js');
 let data = "";  // data to be written to .csv
 const season = 2020;   
 
-app.get('/', async (req, res) => {
+async function analyzeBearHouse() {
     //get team names
     let teams = await initializeTeams();
-    let gamesRes = "";
     let numWeeks = await getNumberOfWeeksInRegularSeason();
 
     //run through season and log matchups, wins, losses
     teams = await analyzeSeason(teams, numWeeks);
-
-    fs.writeFile('data.csv', data, (err) => {
+    fs.writeFileSync('data.csv', data, (err) => {
         if (err) throw err;
-        console.log('data.csv saved.');
     });
-  res.send(gamesRes.toString())
-});
+
+    console.log("Wrote to data.csv!");
+}
 
 async function initializeTeams() {
+    console.log("Initializing teams...");
     teams = new Map();
     await myClient.getTeamsAtWeek({seasonId: season, scoringPeriodId: 1}).then((res) => {
       res.forEach(team => {
@@ -35,22 +34,25 @@ async function initializeTeams() {
     }).catch((err) => {
         console.error(err);
     });
+    console.log(`Found ${teams.size} teams in league ${process.env.LEAGUE_ID}!`)
     return teams;
 }
 
 async function getNumberOfWeeksInRegularSeason() {
+    console.log(`Determining number of regular season weeks in league ${process.env.LEAGUE_ID}...`);
     let numWeeks = 0;
     await myClient.getLeagueInfo({ seasonId: season }).then((league) => {
         numWeeks = league.scheduleSettings.numberOfRegularSeasonMatchups;
     }).catch((err) => {
         console.error(err);
     });
+    console.log(`League ${process.env.LEAGUE_ID} has ${numWeeks} weeks in its regular season!`)
     return numWeeks;
 }
 
 async function analyzeSeason(teams, numWeeks) {
     for (let week = 1; week <= numWeeks; week++) {
-        console.log(week);
+        console.log(`Analyzing week ${week}...`);
         data += `Week ${week}\nHome Team,Home Score,,Away Team, Away Score\n`
         await myClient.getBoxscoreForWeek( { seasonId: season, scoringPeriodId: week, matchupPeriodId: week}).then((boxScores) => {
             boxScores.forEach((boxScore) => {
@@ -73,7 +75,7 @@ async function analyzeSeason(teams, numWeeks) {
         }).finally(() => {
             data += "\n\n";
         });
-
+ 
         writeWeeklyStandingsToData(week, teams);
     }
     return teams;
@@ -108,6 +110,9 @@ function compareWins(a, b) {
   return 0;
 }
 
-app.listen(port, () => {
-  console.log(`example app listening on port ${port}!`)
+app.listen(port, async () => {
+  console.log("Bear House Fantasy Football Analysis Tool booted up!");
+  await analyzeBearHouse();
+  console.log("Bear House Fantasy Football Analysis Tool finished!")
+  process.exit();
 });
